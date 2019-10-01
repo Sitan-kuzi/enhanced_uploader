@@ -1,47 +1,62 @@
 ﻿using System;
+using System.Drawing.Imaging;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using System.Collections.Generic;
+
 using Newtonsoft.Json;
+using Steamworks;
+using Microsoft.WindowsAPICodePack.Dialogs;
+using System.Text;
 
 namespace WorkshopUploader
 {
-	// Token: 0x02000005 RID: 5
 	public partial class Form1 : Form
 	{
-		// Token: 0x0600000B RID: 11 RVA: 0x00002218 File Offset: 0x00000418
-		public Form1()
+        private static readonly Timer callbacksListener = new Timer();
+        public Form1()
 		{
 			this.InitializeComponent();
-			this.cboCategory.SelectedIndex = 0;
 			this.cboVisibility.SelectedIndex = 0;
-			this.WorkshopItemInfo = default(WorkshopItemStruct);
-			this.WorkshopItemInfo.ItemID = -1;
+			this.WorkshopItemInfo = default;
 			Control[] array = new Control[]
-			{
-				this.txtTitle,
+            {
+                this.txtTitle,
 				this.txtDescription,
 				this.txtContentFolder,
 				this.txtPreviewImage
-			};
+            };
 			for (int i = 0; i < array.Length; i++)
 			{
 				array[i].SetCueText(this.toolTip1);
 			}
-		}
 
-		// Token: 0x0600000C RID: 12 RVA: 0x000022A8 File Offset: 0x000004A8
-		private string[] GetWorkshopFileNames()
+            SteamFriends.SetRichPresence("status", "Uploading Workshop Items");
+            callbacksListener.Tick += new EventHandler(RunCallbacks);
+            callbacksListener.Interval = 100;
+        }
+
+        static int i = 0;
+        private void RunCallbacks(Object myObject, EventArgs myEventArgs)
+        {
+            if (this.bIsUploading)
+                GetItemUpdateProgress();
+
+            Debug.WriteLine("RunCallbacks(), " + ++i);
+            SteamAPI.RunCallbacks();
+        }
+
+        private string[] GetWorkshopFileNames()
 		{
 			return (from x in Directory.GetFiles(this.txtContentFolder.Text, "*.JSON", SearchOption.AllDirectories)
 			where Path.GetFileName(x).ToLower() == "workshopiteminfo.json"
 			select x).ToArray<string>();
 		}
 
-		// Token: 0x0600000D RID: 13 RVA: 0x000022F4 File Offset: 0x000004F4
 		private void LoadPreviousContent()
 		{
 			string[] workshopFileNames = this.GetWorkshopFileNames();
@@ -73,34 +88,68 @@ namespace WorkshopUploader
 						if (this.cboVisibility.SelectedIndex == 0)
 						{
 							this.cboVisibility.SelectedIndex = this.WorkshopItemInfo.Visibility;
-						}
-					}
+                        }
+                        if (this.WorkshopItemInfo.ItemID != 0)
+                        {
+                            this.btnSendContentButton.Text = "Update Content";
+                        }
+                        this.tabControl.SelectTab(this.WorkshopItemInfo.ItemType);
+                        IEnumerable<string> tags = from checkbox in this.cboCategory.CheckBoxItems where checkbox.Checked select checkbox.Text;
+                        if (tags.Count() > 1 || tags.Count() == 1 && tags.First() != "Item")
+                        {
+                            foreach (string tag in this.WorkshopItemInfo.Tags)
+                            {
+                                foreach (CheckBox checkbox in this.cboCategory.CheckBoxItems)
+                                {
+                                    if (tag == checkbox.Text)
+                                    {
+                                        checkbox.Checked = true;
+                                    }
+                                }
+                            }
+                        }
+                        this.workshopId.Text = this.WorkshopItemInfo.ItemID.ToString();
+                    }
 					catch (Exception ex)
 					{
 						MessageBox.Show(ex.ToString(), "COULD NOT READ FROM JSON FILE");
 					}
 				}
 			}
-		}
+        }
 
-		// Token: 0x0600000E RID: 14 RVA: 0x00002424 File Offset: 0x00000624
-		private void btnContentButton_Click(object sender, EventArgs e)
+        private void btnWorkshopType_Changed(object sender, EventArgs e)
+        {
+            this.cboCategory.Items.Clear();
+            if (this.tabControl.SelectedTab == this.workshopTypeMap)
+                this.cboCategory.Items.AddRange(new object[] { "Maps", "Training", "Multiplayer" });
+            else if (this.tabControl.SelectedTab == this.workshopTypeItem)
+                this.cboCategory.Items.AddRange(new object[] { "Items", "Decal", "Wheels", "Boost", "Goal Explotion", "Trail" });
+
+            if (this.cboCategory.CheckBoxItems.Any())
+            {
+                this.cboCategory.dropDown.Height = this.cboCategory.CheckBoxItems[1].Height * (this.cboCategory.CheckBoxItems.Count - 1) + 6;
+                this.cboCategory.CheckBoxItems[1].Checked = true;
+            }
+        }
+
+        private void btnContentButton_Click(object sender, EventArgs e)
 		{
-			using (FolderBrowserDialog folderBrowserDialog = new FolderBrowserDialog())
+			using (CommonOpenFileDialog folderBrowserDialog = new CommonOpenFileDialog())
 			{
 				if (Directory.Exists(this.txtContentFolder.Text))
 				{
-					folderBrowserDialog.SelectedPath = this.txtContentFolder.Text;
+					folderBrowserDialog.InitialDirectory = this.txtContentFolder.Text;
 				}
-				if (folderBrowserDialog.ShowDialog() == DialogResult.OK)
+                folderBrowserDialog.IsFolderPicker = true;
+                if (folderBrowserDialog.ShowDialog() == CommonFileDialogResult.Ok)
 				{
-					this.txtContentFolder.Text = folderBrowserDialog.SelectedPath;
+					this.txtContentFolder.Text = folderBrowserDialog.FileName;
 					this.LoadPreviousContent();
 				}
 			}
 		}
 
-		// Token: 0x0600000F RID: 15 RVA: 0x00002498 File Offset: 0x00000698
 		private void btnPreviewButton_Click(object sender, EventArgs e)
 		{
 			using (OpenFileDialog openFileDialog = new OpenFileDialog())
@@ -109,7 +158,7 @@ namespace WorkshopUploader
 				{
 					openFileDialog.InitialDirectory = this.txtPreviewImage.Text;
 				}
-				openFileDialog.Filter = "Image Files (*.png;*.jpg)|*.png;*.jpg";
+                openFileDialog.Filter = "Image Files (*.png;*.jpg)|*.png;*.jpg";
 				if (openFileDialog.ShowDialog() == DialogResult.OK)
 				{
 					this.txtPreviewImage.Text = openFileDialog.FileName;
@@ -122,10 +171,9 @@ namespace WorkshopUploader
 			}
 		}
 
-		// Token: 0x06000010 RID: 16 RVA: 0x00002548 File Offset: 0x00000748
-		private void sendContentButton_Click(object sender, EventArgs e)
+        private void sendContentButton_Click(object sender, EventArgs e)
 		{
-			if (this.SubmitProcess != null && !this.SubmitProcess.HasExited)
+			if (this.bIsUploading)
 			{
 				MessageBox.Show("Currently Sending");
 				return;
@@ -180,76 +228,200 @@ namespace WorkshopUploader
 				MessageBox.Show("No .udk or .umap files found in this folder.");
 				return;
 			}
-			string arguments = string.Concat(new object[]
-			{
-				"WORKSHOP Title=\"",
-				this.txtTitle.Text,
-				"\" Description=\"",
-				this.txtDescription.Text,
-				"\" Content=\"",
-				this.txtContentFolder.Text,
-				"\" Preview=\"",
-				this.txtPreviewImage.Text,
-				"\" Tag=",
-				this.cboCategory.SelectedItem,
-				" ItemID=",
-				this.WorkshopItemInfo.ItemID,
-				" Visibility=",
-				this.cboVisibility.SelectedIndex,
-				" -nopause"
-			});
-			if (File.Exists("Win32\\RocketLeague.exe"))
-			{
-				this.SubmitProcess = Process.Start("Win32\\RocketLeague.exe", arguments);
-				return;
-			}
-			if (File.Exists("Win32\\TAGame-Win32-Shipping.exe"))
-			{
-				this.SubmitProcess = Process.Start("Win32\\TAGame-Win32-Shipping.exe", arguments);
-				return;
-			}
-			if (File.Exists("Win32\\TAGame.exe"))
-			{
-				this.SubmitProcess = Process.Start("Win32\\TAGame.exe", arguments);
-				return;
-			}
-			MessageBox.Show("Please run this program in the directory where Rocket League's exe exists.");
+
+            this.bIsUploading = true;
+            callbacksListener.Start();
+
+            using (StreamWriter streamWriter = new StreamWriter(this.txtContentFolder.Text + "\\WorkshopItemInfo.JSON"))
+            {
+                this.WorkshopItemInfo.ItemID = ulong.Parse(this.workshopId.Text);
+                this.WorkshopItemInfo.ItemType = this.tabControl.SelectedIndex;
+                this.WorkshopItemInfo.Title = this.txtTitle.Text;
+                this.WorkshopItemInfo.Description = this.txtDescription.Text;
+                this.WorkshopItemInfo.Tags = (from checkbox in this.cboCategory.CheckBoxItems where checkbox.Checked select checkbox.Text).ToList();
+                this.WorkshopItemInfo.Preview = this.txtPreviewImage.Text;
+                this.WorkshopItemInfo.Visibility = this.cboVisibility.SelectedIndex;
+
+                string text = JsonConvert.SerializeObject(this.WorkshopItemInfo);
+                streamWriter.Write(text);
+            }
+
+            if (this.WorkshopItemInfo.ItemID == 0)
+                CreateItem();
+            else
+                UpdateItem((PublishedFileId_t)this.WorkshopItemInfo.ItemID);
 		}
 
-		// Token: 0x06000011 RID: 17 RVA: 0x000027FC File Offset: 0x000009FC
-		private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-		{
-			Process.Start("www.psyonix.com/dt_portfolio/rocket-league/");
-		}
+        protected CallResult<CreateItemResult_t> m_CreateItemResult;
+        private void CreateItem()
+        {
+            this.bIsUploading = true;
+            m_CreateItemResult = CallResult<CreateItemResult_t>.Create(OnCreateItem);
+            EWorkshopFileType eFileType = EWorkshopFileType.k_EWorkshopFileTypeCommunity;
+            if (this.tabControl.SelectedTab == this.workshopTypeItem)
+                eFileType = EWorkshopFileType.k_EWorkshopFileTypeMicrotransaction;
 
-		// Token: 0x06000012 RID: 18 RVA: 0x000027FC File Offset: 0x000009FC
-		private void linkLabel2_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-		{
-			Process.Start("www.psyonix.com/dt_portfolio/rocket-league/");
-		}
+            SteamAPICall_t callHandle = SteamUGC.CreateItem((AppId_t)252950, eFileType);
+            m_CreateItemResult.Set(callHandle);
 
-		// Token: 0x06000013 RID: 19 RVA: 0x000027FC File Offset: 0x000009FC
-		private void linkLabel3_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-		{
-			Process.Start("www.psyonix.com/dt_portfolio/rocket-league/");
-		}
+            this.btnSendContentButton.Text = "Creating Item...";
+        }
 
-		// Token: 0x06000014 RID: 20 RVA: 0x000027FC File Offset: 0x000009FC
-		private void linkLabel4_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-		{
-			Process.Start("www.psyonix.com/dt_portfolio/rocket-league/");
-		}
+        UGCUpdateHandle_t updateHandle;
+        protected CallResult<SubmitItemUpdateResult_t> m_SubmitItemUpdateCallResult;
+        private void OnCreateItem(CreateItemResult_t pCallback, bool bIOFailure)
+        {
+            if (bIOFailure || pCallback.m_eResult != EResult.k_EResultOK)
+            {
+                this.bIsUploading = false;
+                callbacksListener.Stop();
+                Debug.WriteLine("CreateItem failed, " + pCallback.m_eResult.ToString().Substring(9));
+                MessageBox.Show(AddSpacesToSentence(pCallback.m_eResult.ToString().Substring(9)), "Creating Workshop Item failed");
+                this.btnSendContentButton.Text = "Upload Content";
+                return;
+            }
+            if (pCallback.m_bUserNeedsToAcceptWorkshopLegalAgreement)
+            {
+                Debug.WriteLine("You did not accept legal agreements required to upload this workshop item.");
+                Process.Start("steam://url/CommunityFilePage/" + pCallback.m_nPublishedFileId);
+            }
 
-		// Token: 0x06000015 RID: 21 RVA: 0x000027FC File Offset: 0x000009FC
-		private void linkLabel5_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-		{
-			Process.Start("www.psyonix.com/dt_portfolio/rocket-league/");
-		}
+            Debug.WriteLine("Created an workshop item: " + pCallback.m_nPublishedFileId);
+            this.WorkshopItemInfo.ItemID = (ulong)pCallback.m_nPublishedFileId;
+            this.workshopId.Text = pCallback.m_nPublishedFileId.ToString();
 
-		// Token: 0x04000008 RID: 8
-		public Process SubmitProcess;
+            using (StreamWriter streamWriter = new StreamWriter(this.txtContentFolder.Text + "\\WorkshopItemInfo.JSON"))
+            {
+                this.WorkshopItemInfo.ItemID = ulong.Parse(this.workshopId.Text);
+                this.WorkshopItemInfo.ItemType = this.tabControl.SelectedIndex;
+                this.WorkshopItemInfo.Title = this.txtTitle.Text;
+                this.WorkshopItemInfo.Description = this.txtDescription.Text;
+                this.WorkshopItemInfo.Tags = (from checkbox in this.cboCategory.CheckBoxItems where checkbox.Checked select checkbox.Text).ToList();
+                this.WorkshopItemInfo.Preview = this.txtPreviewImage.Text;
+                this.WorkshopItemInfo.Visibility = this.cboVisibility.SelectedIndex;
 
-		// Token: 0x04000009 RID: 9
+                string text = JsonConvert.SerializeObject(this.WorkshopItemInfo);
+                streamWriter.Write(text);
+            }
+
+            UpdateItem(pCallback.m_nPublishedFileId);
+        }
+
+        private void UpdateItem(PublishedFileId_t m_nPublishedFileId)
+        {
+            this.bIsUploading = true;
+            updateHandle = SteamUGC.StartItemUpdate((AppId_t)252950, m_nPublishedFileId);
+            SteamUGC.SetItemTitle(updateHandle, this.WorkshopItemInfo.Title);
+            SteamUGC.SetItemDescription(updateHandle, this.WorkshopItemInfo.Description);
+            SteamUGC.SetItemVisibility(updateHandle, (ERemoteStoragePublishedFileVisibility)this.WorkshopItemInfo.Visibility);
+            SteamUGC.SetItemTags(updateHandle, this.WorkshopItemInfo.Tags);
+            SteamUGC.SetItemContent(updateHandle, this.txtContentFolder.Text);
+            SteamUGC.SetItemPreview(updateHandle, this.WorkshopItemInfo.Preview);
+
+            this.btnSendContentButton.Text = "Uploading Content...";
+
+            m_SubmitItemUpdateCallResult = CallResult<SubmitItemUpdateResult_t>.Create(OnSubmitItemUpdate);
+            SteamAPICall_t callHandle = SteamUGC.SubmitItemUpdate(updateHandle, null);
+            m_SubmitItemUpdateCallResult.Set(callHandle);
+        }
+
+        private Bitmap Progressbar(float progress)
+        {
+            byte[] _imageBuffer = new byte[4 * this.btnSendContentButton.Width * this.btnSendContentButton.Height];
+            for (var x = 0; x < this.btnSendContentButton.Width; x++)
+            {
+                for (var y = 0; y < this.btnSendContentButton.Height; y++)
+                {
+                    if (x < this.btnSendContentButton.Width * progress) {
+                        // Color.SpringGreen, 00FF7F
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4)] =     0;    // red
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 1] = 255;  // green
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 2] = 127;  // blue
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 3] = 255;  // aplha
+                    }
+                    else {
+                        // Button.BackgroundColor, e1e1e1
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4)] =     225;  // red
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 1] = 225;  // green
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 2] = 225;  // blue
+                        _imageBuffer[(this.btnSendContentButton.Width * 4 * y) + (x * 4) + 3] = 255;  // aplha
+                    }
+                }
+            }
+            unsafe
+            {
+                fixed (byte* ptr = _imageBuffer)
+                {
+                    return new Bitmap(this.btnSendContentButton.Width, this.btnSendContentButton.Height, this.btnSendContentButton.Width * 4, PixelFormat.Format32bppRgb, new IntPtr(ptr));
+                }
+            }
+        }
+
+        /* From: https://stackoverflow.com/a/272929 */
+        private static string AddSpacesToSentence(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+            StringBuilder newText = new StringBuilder(text.Length * 2);
+            newText.Append(text[0]);
+            for (int i = 1; i < text.Length; i++)
+            {
+                if (char.IsUpper(text[i]) && text[i - 1] != ' ')
+                    newText.Append(' ');
+                newText.Append(text[i]);
+            }
+            return newText.ToString();
+        }
+
+        private void GetItemUpdateProgress()
+        {
+            EItemUpdateStatus updateStatus = SteamUGC.GetItemUpdateProgress(updateHandle, out ulong punBytesProcessed, out ulong punBytesTotal);
+
+            Debug.WriteLine("Progress: " + punBytesProcessed + "/" + punBytesTotal + ", " + updateStatus.ToString().Substring(19));
+            string progressPerc = "";
+            if (updateStatus == EItemUpdateStatus.k_EItemUpdateStatusInvalid)
+            {
+                return;
+            }
+
+            if (punBytesTotal > 0)
+            {
+                float progress = (float)punBytesProcessed / (float)punBytesTotal;
+                progressPerc = " " + (int)(progress * 100) + "%";
+                this.btnSendContentButton.BackgroundImage = Progressbar(((float)updateStatus + progress) / 5.0f);
+            }
+            else
+            {
+                this.btnSendContentButton.BackgroundImage = Progressbar((float)updateStatus / 5.0f);
+            }
+
+            this.btnSendContentButton.Text = AddSpacesToSentence(updateStatus.ToString().Substring(19)) + progressPerc;
+        }
+
+        private void OnSubmitItemUpdate(SubmitItemUpdateResult_t pCallback, bool bIOFailure)
+        {
+            callbacksListener.Stop();
+            this.bIsUploading = false;
+            this.btnSendContentButton.BackgroundImage = Progressbar(0.0f);
+
+            if (bIOFailure || pCallback.m_eResult != EResult.k_EResultOK)
+            {
+                Debug.WriteLine("SubmitItemUpdate failed, " + pCallback.m_eResult.ToString().Substring(9));
+                MessageBox.Show(AddSpacesToSentence(pCallback.m_eResult.ToString().Substring(9)), "Submitting Workshop Item Update failed");
+                if (this.WorkshopItemInfo.ItemID == 0)
+                    this.btnSendContentButton.Text = "Upload Content";
+                else
+                    this.btnSendContentButton.Text = "Update Content";
+                return;
+            }
+
+            Debug.WriteLine("SubmitItemUpdate finished");
+            Process.Start("https://steamcommunity.com/sharedfiles/filedetails/?id=" + pCallback.m_nPublishedFileId);
+            this.btnSendContentButton.Text = "Update Content";
+        }
+
+		public bool bIsUploading = false;
+
 		public WorkshopItemStruct WorkshopItemInfo;
 	}
 }
